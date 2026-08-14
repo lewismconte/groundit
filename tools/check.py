@@ -26,11 +26,21 @@ ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
 # the parse, which it cannot do in pure ASCII.
 EXEMPT_DIRS = ("tools", "tests")
 
-# Revit-side modules that must import with no Revit present.
-LIB_MODULES = ["groundit", "groundit.geodesy", "groundit.tiles", "groundit.geom",
-               "groundit.overpass", "groundit.sitespec", "groundit.source",
-               "groundit.net", "groundit.picker", "groundit.shell",
-               "groundit.build", "groundit.ui"]
+def lib_modules():
+    """Every module in lib/groundit, discovered rather than listed.
+
+    This used to be a hardcoded list, which meant a newly added module was
+    silently exempt from the import check - exactly the module most likely
+    to have an eager RevitAPI import in it.
+    """
+    package = os.path.join(ROOT, "lib", "groundit")
+    names = ["groundit"]
+    for entry in sorted(os.listdir(package)):
+        if entry.endswith(".py") and entry != "__init__.py":
+            names.append("groundit." + entry[:-3])
+    return names
+
+
 
 failures = []
 
@@ -155,8 +165,9 @@ def check_bundles():
 def check_headless_import():
     print("[4] Headless lib import (no eager RevitAPI)")
     sys.path.insert(0, os.path.join(ROOT, "lib"))
+    modules = lib_modules()
     broken = []
-    for name in LIB_MODULES:
+    for name in modules:
         try:
             __import__(name)
         except Exception as exc:
@@ -167,7 +178,7 @@ def check_headless_import():
         for item in broken:
             print("      " + item)
     else:
-        print("    OK - all %d modules import with no Revit present" % len(LIB_MODULES))
+        print("    OK - all %d modules import with no Revit present" % len(modules))
 
 
 def main():

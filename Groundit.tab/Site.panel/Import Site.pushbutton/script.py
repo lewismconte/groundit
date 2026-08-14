@@ -19,7 +19,7 @@ from pyrevit import forms, revit, script
 
 from Autodesk.Revit import DB
 
-from groundit import build, net, picker, sitespec, source, ui
+from groundit import build, net, picker, pipeline, sitespec, source, ui
 from groundit.shell import open_path
 
 logger = script.get_logger()
@@ -125,14 +125,6 @@ def download(request):
 
 def build_and_link(site, request):
     """Build the site model, save it, and link it in. -> (path, builder)."""
-    app = doc.Application
-    builder = build.SiteBuilder(site)
-
-    if request.get("align_true_north"):
-        # Site coordinates are true-north-up; the host may not be.
-        builder.set_rotation(-build.project_north_angle(doc))
-
-    site_doc = build.create_site_document(app, doc)
     path = build.default_site_path(doc, request.get("name") or "Site")
 
     with forms.ProgressBar(title="Groundit: building", cancellable=False) as bar:
@@ -143,24 +135,11 @@ def build_and_link(site, request):
                 pass
             bar.update_progress(int(fraction * 100), 100)
 
-        transaction = build.quiet_transaction(site_doc, "Groundit site")
-        transaction.Start()
-        try:
-            builder.build_into(site_doc, report)
-            transaction.Commit()
-        except Exception:
-            transaction.RollBack()
-            site_doc.Close(False)
-            raise
-
-        build.save_document(site_doc, path)
-        site_doc.Close(False)
+        builder = pipeline.build_and_save(doc, site, request, path, report)
 
     with revit.Transaction("Groundit: link site", doc=doc):
         build.link_into_host(doc, path)
-        if request.get("write_site_location"):
-            west, south, east, north = site["bbox"]
-            build.set_site_location(doc, (west + east) / 2.0, (south + north) / 2.0)
+        pipeline.apply_site_location(doc, site, request)
 
     return path, builder
 

@@ -670,9 +670,66 @@ fetch("/api/config")
     }
     if (cfg && cfg.name) document.getElementById("brand").querySelector("p").textContent =
       "Site context for " + cfg.name;
+    if (cfg) restore(cfg);
   })
   .catch(function () { })
   .then(function () { draw(); update(); });
+
+/* Re-open the picker on an existing site: put every control back where it
+   was so the user edits their site rather than rebuilding it from scratch. */
+function restore(cfg) {
+  var req = cfg.request;
+  if (!req) return;
+
+  if (req.layers && req.layers.length) {
+    ["terrain", "buildings", "roads", "water", "green", "rail"].forEach(function (k) {
+      var box = document.getElementById("l_" + k);
+      if (box) box.checked = req.layers.indexOf(k) !== -1;
+    });
+  }
+  setValue("road_group", req.road_group);
+  setValue("road_style", req.road_style);
+  setValue("datum", req.datum);
+  if (req.terrain) {
+    setValue("res", req.terrain.target_m);
+    setValue("pts", req.terrain.max_points);
+  }
+  setChecked("truenorth", req.align_true_north);
+  setChecked("writeloc", req.write_site_location);
+
+  /* The stored bbox is the site's current extent: show it selected and frame
+     the map on it, so "change the area" starts from what is already there. */
+  var box = cfg.bbox || req.bbox;
+  if (box && box.length === 4) {
+    bbox = box.slice();
+    view.lon = (bbox[0] + bbox[2]) / 2;
+    view.lat = (bbox[1] + bbox[3]) / 2;
+    view.z = zoomToFit(bbox);
+    document.getElementById("hint").innerHTML =
+      "Showing this site's current area &mdash; hold <b>Shift</b> and drag to change it";
+  }
+}
+
+function setValue(id, value) {
+  var el = document.getElementById(id);
+  if (el && value !== undefined && value !== null) el.value = value;
+}
+
+function setChecked(id, value) {
+  var el = document.getElementById(id);
+  if (el && typeof value === "boolean") el.checked = value;
+}
+
+function zoomToFit(box) {
+  /* Largest zoom whose viewport still holds the box, with a little air. */
+  var vp = viewport();
+  for (var z = 18; z > 2; z--) {
+    var dx = Math.abs(lonToWorldX(box[2], z) - lonToWorldX(box[0], z));
+    var dy = Math.abs(latToWorldY(box[1], z) - latToWorldY(box[3], z));
+    if (dx < vp.w * 0.8 && dy < vp.h * 0.8) return z;
+  }
+  return 14;
+}
 </script>
 </body>
 </html>

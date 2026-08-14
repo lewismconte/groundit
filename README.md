@@ -22,10 +22,10 @@ No API keys. No accounts. No GIS software. No QGIS, no GDAL, no shapefiles.
 |---|---|
 | Terrain | A toposolid built from real elevation data |
 | Buildings | Massing solids at real heights, with courtyards as openings |
-| Roads | 3D centrelines that follow the ground, carrying class and width |
+| Roads | Surfaces at real carriageway width, draped on the terrain (or centrelines, or both) |
 | Water | Flat areas for rivers, lakes and docks |
 | Parks and trees | Flat areas for green space |
-| Railways | 3D centrelines |
+| Railways | Same treatment as roads |
 
 The site is built in a **separate model and linked**, not dumped into your
 project. Thousands of context elements stay out of your file, the site can be
@@ -33,6 +33,17 @@ reloaded or swapped without touching the building, and you can unload it for
 a clean drawing set. Files are date-stamped into a `Groundit Sites` folder
 next to the host model, so a second run never overwrites a site you have
 already linked and adjusted.
+
+### Keeping a site current
+
+**Update Site** re-downloads a site that is already linked and rebuilds it in
+place. The link is reloaded rather than replaced, so it keeps its position,
+workset, phase and any view overrides you have set up.
+
+Each site model is written with a small `.groundit.json` sidecar recording the
+request that produced it, which is how Update knows what to fetch. You can
+either refresh the same area with fresh data, or reopen the map with every
+control exactly as you left it to widen the area or add layers.
 
 ---
 
@@ -151,10 +162,13 @@ corner rather than hovering at its uphill one.
 
 ## Limits and known rough edges
 
-- **Roads are centrelines, not ribbons.** A proper ribbon needs a mitred
-  offset of every polyline, and in a dense city that runs to tens of thousands
-  of solids. The width is written to each element's comment so ribbons can be
-  generated later.
+- **Road ribbons do not form junctions.** Each way is meshed independently, so
+  ribbons overlap at intersections rather than merging into a single road
+  surface. It reads correctly in plan and in 3D, but it is not a road network
+  you could set out from. Centrelines remain the lighter option in a dense
+  city, and `Both` gives you geometry to look at plus lines to trace.
+- **Sharp bends are bevelled, not mitred.** Beyond about a 133 degree turn an
+  exact mitre would spike off to infinity, so the corner is cut instead.
 - **Building heights are only as good as OSM.** Coverage is excellent in some
   cities (San Francisco is about 90% measured) and absent in others.
 - **Keep each side under 20 km**, and expect a dense city centre at a few

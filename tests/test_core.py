@@ -408,6 +408,78 @@ def test_offset_polyline():
           all(v == v and abs(v) < 1e6 for p in left + right for v in p))
 
 
+def test_sidecar():
+    """The record that makes an update possible.
+
+    Written beside the .rvt so a site's settings can be read back without
+    opening the site document. Runs headless because these functions touch
+    only json and os, never the Revit API.
+    """
+    print("Site sidecar")
+    import shutil
+    import tempfile
+    from groundit import build
+
+    folder = tempfile.mkdtemp(prefix="groundit_test_")
+    try:
+        rvt = os.path.join(folder, "Harbour_20260814_1030.rvt")
+        check("sidecar sits beside the model",
+              build.sidecar_path(rvt) == os.path.join(
+                  folder, "Harbour_20260814_1030.groundit.json"))
+
+        check("missing sidecar reads as None", build.read_sidecar(rvt) is None)
+
+        request = sitespec.merge_request({
+            "name": "Harbour",
+            "bbox": [-71.062, 42.354, -71.048, 42.364],
+            "layers": ["terrain", "buildings", "roads", "water"],
+            "road_style": "centrelines",
+            "datum": "min",
+        })
+        build.write_sidecar(rvt, request, {"bbox": request["bbox"]})
+        payload = build.read_sidecar(rvt)
+
+        check("sidecar round-trips", payload is not None)
+        check("request survives intact",
+              payload["request"]["road_style"] == "centrelines"
+              and payload["request"]["datum"] == "min"
+              and payload["request"]["layers"] == ["terrain", "buildings",
+                                                   "roads", "water"])
+        check("bbox survives intact", payload["bbox"] == request["bbox"])
+        check("records what wrote it", payload["tool"] == "groundit")
+        check("records the spec version",
+              payload["spec_version"] == sitespec.SPEC_VERSION)
+        check("records when", bool(payload.get("written")))
+
+        # A restored request must still validate, or update would dead-end.
+        ok, message = sitespec.validate_request(
+            sitespec.merge_request(payload["request"]))
+        check("restored request is still valid", ok, message)
+
+        # Someone else's json next to a .rvt must not be mistaken for ours.
+        other = os.path.join(folder, "NotOurs.rvt")
+        sitespec.write_json(build.sidecar_path(other), {"tool": "something-else"})
+        check("foreign sidecar is ignored", build.read_sidecar(other) is None)
+
+        # A corrupt sidecar must not raise; it just means "not updatable".
+        broken = os.path.join(folder, "Broken.rvt")
+        handle = open(build.sidecar_path(broken), "w")
+        handle.write("{ this is not json")
+        handle.close()
+        check("corrupt sidecar reads as None", build.read_sidecar(broken) is None)
+
+        # Non-ASCII names are the norm in OSM; the sidecar must survive them.
+        accented = os.path.join(folder, "Munchen.rvt")
+        request["name"] = u"M\xfcnchen Hauptbahnhof"
+        build.write_sidecar(accented, request)
+        back = build.read_sidecar(accented)
+        check("non-ascii name survives",
+              back["request"]["name"] == u"M\xfcnchen Hauptbahnhof",
+              back["request"]["name"])
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
+
+
 def test_transport():
     """A broken transport must fall through, not end the run.
 
@@ -604,6 +676,7 @@ def main():
     test_overpass_parse()
     test_grid_and_spec()
     test_offset_polyline()
+    test_sidecar()
     test_transport()
     test_picker_pump()
     if "--online" in sys.argv:

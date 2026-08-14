@@ -87,9 +87,46 @@ def import_site_icon(theme):
          "icon.png" if theme == "light" else "icon.dark.png")
 
 
+def update_site_icon(theme):
+    """The same ground plate, circled by a refresh arrow.
+
+    Sharing the plate is deliberate: at ribbon size the two buttons should
+    read as the same subject with different verbs, not as two unrelated
+    tools.
+    """
+    import math
+
+    outline, ground, contour, accent, _building = PALETTES[theme]
+    img, d = canvas()
+
+    # Same plate as Import, inset to leave room for the arrow to circle it.
+    d.rounded_rectangle(sc(24, 30, 72, 72), radius=6 * S,
+                        fill=ground, outline=outline, width=4 * S)
+    for y, amplitude, phase in ((62, 3.0, 0.0), (52, 3.5, 0.6), (42, 3.0, 1.2)):
+        d.line(sc(*_wave(y, amplitude, phase, x0=26, x1=70, steps=24)),
+               fill=contour, width=3 * S, joint="curve")
+
+    # Refresh arc: three quarters of a circle, leaving a gap for the head.
+    box = sc(10, 12, 86, 88)
+    d.arc(box, start=200, end=110, fill=accent, width=5 * S)
+
+    # Arrowhead at the open end of the arc, pointing along the sweep.
+    cx, cy, r = 48.0, 50.0, 38.0
+    angle = math.radians(110)
+    tip = (cx + r * math.cos(angle), cy + r * math.sin(angle))
+    for rot in (angle + math.radians(140), angle - math.radians(140)):
+        d.line(sc(tip[0], tip[1],
+                  tip[0] + 13 * math.cos(rot), tip[1] + 13 * math.sin(rot)),
+               fill=accent, width=5 * S)
+
+    save(img, "Update Site.pushbutton",
+         "icon.png" if theme == "light" else "icon.dark.png")
+
+
 def main():
     for theme in ("light", "dark"):
         import_site_icon(theme)
+        update_site_icon(theme)
 
 
 if __name__ == "__main__":

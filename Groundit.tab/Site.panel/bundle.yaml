@@ -3,3 +3,4 @@
 # Names are the bundle folder names WITHOUT the .pushbutton suffix.
 layout:
   - Import Site
+  - Update Site

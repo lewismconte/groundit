@@ -624,6 +624,123 @@ def default_site_path(host_doc, label=None):
     return os.path.join(folder, "%s_%s.rvt" % (clean or "Site", stamp))
 
 
+def sidecar_path(rvt_path):
+    """Where a site model's request is remembered. -> path.
+
+    Kept beside the .rvt rather than inside it. The request has to be
+    readable without opening the site document (which is exactly what an
+    update needs to decide), and a plain JSON file is also something a user
+    can inspect, diff or hand-edit.
+    """
+    import os
+    base = os.path.splitext(rvt_path)[0]
+    return base + ".groundit.json"
+
+
+def write_sidecar(rvt_path, request, extra=None):
+    """Record what produced a site model, next to the model."""
+    import datetime
+
+    from . import sitespec
+    payload = {
+        "tool": "groundit",
+        "spec_version": sitespec.SPEC_VERSION,
+        "written": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "request": request,
+    }
+    payload.update(extra or {})
+    sitespec.write_json(sidecar_path(rvt_path), payload)
+
+
+def read_sidecar(rvt_path):
+    """Read a site model's stored request. -> payload dict, or None."""
+    import os
+
+    from . import sitespec
+    path = sidecar_path(rvt_path)
+    if not os.path.isfile(path):
+        return None
+    try:
+        payload = sitespec.read_json(path)
+    except Exception:
+        return None
+    if not isinstance(payload, dict) or payload.get("tool") != "groundit":
+        return None
+    return payload
+
+
+def link_target_path(link_type):
+    """Absolute path a RevitLinkType points at. -> path, or None."""
+    try:
+        reference = link_type.GetExternalFileReference()
+        model_path = reference.GetAbsolutePath()
+        path = DB.ModelPathUtils.ConvertModelPathToUserVisiblePath(model_path)
+        return path or None
+    except Exception:
+        return None
+
+
+def find_groundit_links(host_doc):
+    """Every linked site this tool produced. -> list of dicts.
+
+    Identified by the sidecar, not by name: a link the user renamed is still
+    ours, and a link that merely happens to be called "Site" is not.
+    """
+    import os
+
+    found = []
+    try:
+        collector = DB.FilteredElementCollector(host_doc).OfClass(DB.RevitLinkType)
+    except Exception:
+        return found
+
+    for link_type in collector:
+        path = link_target_path(link_type)
+        if not path:
+            continue
+        payload = read_sidecar(path)
+        if payload is None:
+            continue
+        try:
+            name = link_type.Name
+        except Exception:
+            name = os.path.basename(path)
+        found.append({
+            "type": link_type,
+            "type_id": link_type.Id,
+            "path": path,
+            "name": name,
+            "exists": os.path.isfile(path),
+            "request": payload.get("request") or {},
+            "written": payload.get("written"),
+        })
+    return found
+
+
+def unload_link(link_type):
+    """Release the file so it can be overwritten. -> True if it was loaded."""
+    try:
+        link_type.Unload(None)
+        return True
+    except Exception:
+        return False
+
+
+def reload_link(link_type):
+    """Reload a link in place, preserving its placement. -> (ok, message)."""
+    try:
+        result = link_type.Reload()
+        try:
+            status = result.LoadResult
+            if status is not None and str(status) not in ("LinkLoaded", "Loaded"):
+                return False, "Revit reported the reload as %s." % status
+        except Exception:
+            pass                        # older API surface; the call succeeded
+        return True, ""
+    except Exception as exc:
+        return False, str(exc)
+
+
 def project_north_angle(doc):
     """Host rotation from true north, in radians. 0 if unavailable."""
     try:
