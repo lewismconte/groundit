@@ -26,6 +26,77 @@ MIN_SEGMENT_M = 0.05
 COLLINEAR_TOL_M = 0.02
 
 
+# A mitred corner runs away to infinity as a turn approaches 180 degrees. Cap
+# the extension at this multiple of the half-width and bevel beyond it, which
+# is what every stroke renderer does and for the same reason.
+MITRE_LIMIT = 2.5
+
+
+def offset_polyline(points, half_width, mitre_limit=MITRE_LIMIT):
+    """Offset a polyline to both sides. -> (left, right) point lists.
+
+    Both lists have one point per input vertex, so left[i], right[i] and
+    points[i] correspond and a ribbon can be built as quads between
+    consecutive stations.
+
+    Corners are mitred: each interior vertex is pushed along the bisector of
+    its two segment normals, scaled by 1/cos(half-angle) so the offset edges
+    actually meet. Without that scaling the ribbon pinches at every bend.
+    Near-reversals (a hairpin, or a doubled-back way) would send the mitre to
+    infinity, so the scale is capped.
+
+    Input must already be free of zero-length segments - run clean_polyline
+    over it first.
+    """
+    n = len(points)
+    if n < 2 or half_width <= 0:
+        return list(points), list(points)
+
+    # Unit direction and left normal of each segment.
+    dirs, normals = [], []
+    for i in range(n - 1):
+        dx = points[i + 1][0] - points[i][0]
+        dy = points[i + 1][1] - points[i][1]
+        length = math.hypot(dx, dy)
+        if length <= 0:
+            # clean_polyline should have removed this; stay standing anyway.
+            dx, dy, length = 1.0, 0.0, 1.0
+        ux, uy = dx / length, dy / length
+        dirs.append((ux, uy))
+        normals.append((-uy, ux))       # left of travel
+
+    left, right = [], []
+    for i in range(n):
+        if i == 0:
+            nx, ny = normals[0]
+            scale = 1.0
+        elif i == n - 1:
+            nx, ny = normals[-1]
+            scale = 1.0
+        else:
+            n0x, n0y = normals[i - 1]
+            n1x, n1y = normals[i]
+            mx, my = n0x + n1x, n0y + n1y
+            mlen = math.hypot(mx, my)
+            if mlen < 1e-9:
+                # A true reversal: no bisector exists. Use the incoming
+                # normal and accept the overlap rather than emitting NaNs.
+                nx, ny = n0x, n0y
+                scale = 1.0
+            else:
+                nx, ny = mx / mlen, my / mlen
+                # cos of half the turn angle, via the bisector against a normal
+                cos_half = nx * n0x + ny * n0y
+                scale = 1.0 / cos_half if cos_half > 1e-6 else mitre_limit
+                scale = min(scale, mitre_limit)
+
+        px, py = points[i]
+        ox, oy = nx * half_width * scale, ny * half_width * scale
+        left.append((px + ox, py + oy))
+        right.append((px - ox, py - oy))
+    return left, right
+
+
 def bbox_of(pts):
     """-> (minx, miny, maxx, maxy)."""
     xs = [p[0] for p in pts]

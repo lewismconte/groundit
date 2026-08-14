@@ -17,6 +17,11 @@ SPEC_VERSION = "0.1.0"
 
 ALL_LAYERS = ["terrain", "buildings", "roads", "water", "green", "rail"]
 
+# How ways are drawn. Ribbons are surfaces of the real carriageway width laid
+# on the terrain; centrelines are single curves carrying a width parameter,
+# which stay handy for tracing over and are much lighter in a dense city.
+ROAD_STYLES = ("centrelines", "ribbons", "both")
+
 # What elevation becomes zero in the Revit model.
 DATUM_MODES = {
     "centre": "Terrain at the centre of the site sits at project zero",
@@ -33,6 +38,7 @@ def default_request():
         "bbox": None,                          # [west, south, east, north]
         "layers": ["terrain", "buildings", "roads"],
         "road_group": "streets",
+        "road_style": "ribbons",               # centrelines | ribbons | both
         "terrain": {
             "max_points": 10000,
             "target_m": 15.0,
@@ -90,6 +96,9 @@ def validate_request(req):
 
     if req.get("datum") not in DATUM_MODES:
         return False, "Unknown datum mode %r." % req.get("datum")
+
+    if req.get("road_style") not in ROAD_STYLES:
+        return False, "Unknown road style %r." % req.get("road_style")
 
     return True, ""
 

@@ -187,6 +187,15 @@
         <option value="all">Everything, including paths</option>
       </select>
     </div>
+
+    <div class="field" id="roadstylefield">
+      <span>Road shape</span>
+      <select id="road_style">
+        <option value="ribbons" selected>Surfaces at real width</option>
+        <option value="centrelines">Centrelines only</option>
+        <option value="both">Both</option>
+      </select>
+    </div>
   </div>
 
   <div class="group">
@@ -545,8 +554,13 @@ function update() {
   var budget = +document.getElementById("pts").value;
   document.getElementById("res_lab").textContent = res + " m";
   document.getElementById("pts_lab").textContent = commas(budget);
+  // Both road fields follow the roads and railways checkboxes: road_style
+  // drives railways too, so either layer keeps it relevant.
+  var waysOn = document.getElementById("l_roads").checked ||
+               document.getElementById("l_rail").checked;
   document.getElementById("roadfield").style.display =
     document.getElementById("l_roads").checked ? "" : "none";
+  document.getElementById("roadstylefield").style.display = waysOn ? "" : "none";
 
   var go = document.getElementById("go"), warn = document.getElementById("warn");
   var chosen = layers();
@@ -619,6 +633,7 @@ document.getElementById("go").onclick = function () {
     bbox: bbox,
     layers: layers(),
     road_group: document.getElementById("road_group").value,
+    road_style: document.getElementById("road_style").value,
     terrain: {
       target_m: +document.getElementById("res").value,
       max_points: +document.getElementById("pts").value

@@ -322,6 +322,92 @@ def test_grid_and_spec():
           geodesy.tile_count(bbox, estimate["zoom"]) <= source.MAX_TILES)
 
 
+def test_offset_polyline():
+    """Ribbon offsetting.
+
+    The invariant that actually matters is perpendicular distance: every
+    offset vertex must sit exactly half-width from BOTH segments meeting at
+    it. Comparing against hand-computed corner coordinates is easy to get
+    wrong (left-of-travel is the inner side of a left turn), the distance
+    check is not.
+    """
+    print("Road ribbon offsetting")
+    from groundit import geom
+
+    def perp(p, a, b):
+        vx, vy = b[0] - a[0], b[1] - a[1]
+        length = math.hypot(vx, vy)
+        return abs((p[0] - a[0]) * vy - (p[1] - a[1]) * vx) / length
+
+    def width(l, r, i):
+        return math.hypot(l[i][0] - r[i][0], l[i][1] - r[i][1])
+
+    straight = [(0, 0), (10, 0), (20, 0)]
+    left, right = geom.offset_polyline(straight, 3.0)
+    check("straight run keeps constant width",
+          all(abs(width(left, right, i) - 6.0) < 1e-9 for i in range(3)))
+    check("straight run stays parallel",
+          all(abs(p[1] - 3.0) < 1e-9 for p in left))
+
+    def bend_at(angle_deg):
+        angle = math.radians(angle_deg)
+        return [(0, 0), (10, 0),
+                (10 + 10 * math.cos(angle), 10 * math.sin(angle))]
+
+    # An exact mitre needs a 1/cos(turn/2) extension, which runs away as the
+    # turn approaches a reversal. Below the limit the corner is exact; above
+    # it the corner is deliberately bevelled instead, so the two regimes get
+    # different assertions.
+    limit_deg = 2 * math.degrees(math.acos(1.0 / geom.MITRE_LIMIT))
+    check("mitre limit bites beyond a sensible turn",
+          130.0 < limit_deg < 136.0, limit_deg)
+
+    for angle_deg in (30, 60, 90, 120):
+        bend = bend_at(angle_deg)
+        left, right = geom.offset_polyline(bend, 3.0)
+        good = True
+        for side in (left, right):
+            for a, b in ((bend[0], bend[1]), (bend[1], bend[2])):
+                if abs(perp(side[1], a, b) - 3.0) > 1e-6:
+                    good = False
+        check("mitre at %d deg sits half-width from both legs" % angle_deg, good)
+
+    for angle_deg in (150, 170):
+        bend = bend_at(angle_deg)
+        left, right = geom.offset_polyline(bend, 3.0)
+        reach = max(math.hypot(side[1][0] - bend[1][0], side[1][1] - bend[1][1])
+                    for side in (left, right))
+        check("turn at %d deg is bevelled, not spiked" % angle_deg,
+              reach <= 3.0 * geom.MITRE_LIMIT + 1e-9, reach)
+
+    hairpin = [(0, 0), (10, 0), (0, 0.5)]
+    left, right = geom.offset_polyline(hairpin, 3.0)
+    finite = all(v == v and abs(v) < 1e6 for p in left + right for v in p)
+    check("hairpin stays finite", finite)
+    check("hairpin mitre is capped",
+          width(left, right, 1) <= 6.0 * geom.MITRE_LIMIT + 1e-9,
+          width(left, right, 1))
+
+    check("single point is handled",
+          geom.offset_polyline([(0, 0)], 3.0) == ([(0, 0)], [(0, 0)]))
+    check("zero width is handled",
+          geom.offset_polyline(straight, 0.0)[0] == straight)
+
+    # Correspondence: one offset vertex per input vertex, so quads can be
+    # built between consecutive stations without index juggling.
+    path = [(0, 0), (5, 1), (9, 6), (14, 6), (20, 2)]
+    left, right = geom.offset_polyline(path, 2.0)
+    check("one offset vertex per input vertex",
+          len(left) == len(path) and len(right) == len(path))
+
+    # Wide offsets on tight bends may self-intersect; that is acceptable for
+    # a context mesh, but it must not produce NaNs or explode.
+    tight = [(0, 0), (2, 0), (2.5, 1.5), (0.2, 1.8)]
+    left, right = geom.offset_polyline(tight, 8.0)
+    check("wide offset on a tight path stays finite",
+          all(v == v and abs(v) < 1e6 for p in left + right for v in p))
+
+
 def test_transport():
     """A broken transport must fall through, not end the run.
 
@@ -517,6 +603,7 @@ def main():
     test_tags()
     test_overpass_parse()
     test_grid_and_spec()
+    test_offset_polyline()
     test_transport()
     test_picker_pump()
     if "--online" in sys.argv:

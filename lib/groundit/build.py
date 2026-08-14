@@ -16,7 +16,7 @@ project origin, so a site fetched around a project sits where you expect.
 
 import math
 
-from . import geodesy
+from . import geodesy, geom
 
 try:
     from Autodesk.Revit import DB
@@ -32,6 +32,15 @@ except Exception:
 # Extruded thickness for the flat layers, in metres. Thin enough to read as a
 # surface, thick enough that Revit will not reject it as a sliver.
 FLAT_THICKNESS_M = 0.15
+
+# Road ribbons sit this far above the terrain. A surface laid exactly on the
+# toposolid z-fights with it in shaded views, which reads as a rendering bug.
+ROAD_LIFT_M = 0.12
+
+# Above this many ribbon quads in one site, mesh building starts to dominate
+# the run. Dense cities with footpaths enabled can exceed it easily, so warn
+# rather than grind.
+RIBBON_QUAD_BUDGET = 60000
 
 # Revit's shortest permitted curve, in feet. This is Application
 # .ShortCurveTolerance, which is an INSTANCE property on the application
@@ -213,6 +222,59 @@ def _direct_shape(doc, category_id, geometry, name, comment=None):
         return None
 
 
+def _tessellated_face(corners, material_id=None):
+    """One quad for a TessellatedShapeBuilder. -> TessellatedFace, or None.
+
+    Degenerate quads are dropped rather than passed on: a face with a
+    zero-length edge makes the whole Build() fail, taking the entire road
+    with it, so one bad corner must not cost the element.
+    """
+    try:
+        for i in range(len(corners)):
+            if corners[i].DistanceTo(corners[(i + 1) % len(corners)]) <= SHORT_CURVE_FT:
+                return None
+        points = List[DB.XYZ]()
+        for corner in corners:
+            points.Add(corner)
+        if material_id is not None:
+            return DB.TessellatedFace(points, material_id)
+        return DB.TessellatedFace(points, DB.ElementId.InvalidElementId)
+    except Exception:
+        return None
+
+
+def _mesh_shape(doc, category_id, faces, name, comment=None):
+    """DirectShape from tessellated faces. -> element, or None.
+
+    Built as an open shell (a surface, not a solid) and with Salvage
+    fallback, so a road whose quads do not form a watertight body still
+    comes through as geometry instead of vanishing.
+    """
+    try:
+        builder = DB.TessellatedShapeBuilder()
+        builder.OpenConnectedFaceSet(False)
+        for face in faces:
+            builder.AddFace(face)
+        builder.CloseConnectedFaceSet()
+        builder.Target = DB.TessellatedShapeBuilderTarget.Mesh
+        builder.Fallback = DB.TessellatedShapeBuilderFallback.Salvage
+        builder.Build()
+        result = builder.GetBuildResult()
+        objects = result.GetGeometricalObjects()
+        if not objects or objects.Count == 0:
+            return None
+
+        shape = DB.DirectShape.CreateElement(doc, category_id)
+        shape.SetShape(objects)
+        if name:
+            shape.Name = name[:200]
+        if comment:
+            _set_comment(shape, comment[:250])
+        return shape
+    except Exception:
+        return None
+
+
 # ------------------------------------------------------------------- builder
 
 class SiteBuilder(object):
@@ -376,16 +438,108 @@ class SiteBuilder(object):
                 continue
             self.counts[key] += 1
 
+    def build_ribbons(self, doc, key):
+        """Roads and railways as surfaces of real width, draped on the terrain.
+
+        A mesh rather than an extrusion, because a road that follows the
+        ground is not planar and CreateExtrusionGeometry needs a planar loop.
+        TessellatedShapeBuilder takes arbitrary quads directly, which is both
+        the correct shape and far cheaper than mitring solids together.
+
+        Each carriageway edge is draped independently rather than by offsetting
+        the centreline height: on a cambered or side-sloping road those differ
+        by enough to see.
+        """
+        features = (self.site.get("features") or {}).get(key) or []
+        if not features:
+            return
+        category = (_category_id(doc, "OST_Roads") if key == "roads" else None) \
+            or _category_id(doc, "OST_GenericModel")
+        if category is None:
+            return
+
+        material = _get_material(doc, key, self._materials)
+        lift = _ft(ROAD_LIFT_M)
+        quads_built = 0
+
+        for feature in features:
+            points = geom.clean_polyline(feature["points"], min_length=2.0)
+            if not points:
+                self.skipped[key] += 1
+                continue
+
+            half = max(0.5, float(feature.get("width") or 4.0)) / 2.0
+            left, right = geom.offset_polyline(points, half)
+
+            # Drape both edges on the terrain we actually built.
+            lz = [self._drape(p) + lift for p in left]
+            rz = [self._drape(p) + lift for p in right]
+
+            faces = []
+            for i in range(len(points) - 1):
+                corners = [
+                    _xyz(left[i][0], left[i][1], lz[i]),
+                    _xyz(left[i + 1][0], left[i + 1][1], lz[i + 1]),
+                    _xyz(right[i + 1][0], right[i + 1][1], rz[i + 1]),
+                    _xyz(right[i][0], right[i][1], rz[i]),
+                ]
+                face = _tessellated_face(corners, material)
+                if face is not None:
+                    faces.append(face)
+
+            if not faces:
+                self.skipped[key] += 1
+                continue
+
+            comment = "OSM %s | %s | width %.1fm" % (
+                feature.get("id"), feature.get("class"), half * 2.0)
+            shape = _mesh_shape(doc, category, faces,
+                                feature.get("name") or feature.get("class"),
+                                comment)
+            if shape is None:
+                self.skipped[key] += 1
+                continue
+            quads_built += len(faces)
+            self.counts[key] += 1
+
+        if quads_built > RIBBON_QUAD_BUDGET:
+            self.notes.append(
+                "%s produced %d surfaces. Turning road detail down, or "
+                "switching to centrelines, will make this site much lighter."
+                % (key.title(), quads_built))
+
+    def _drape(self, point):
+        """Terrain height in metres at a local point, datum already applied.
+
+        Falls back to the datum plane when terrain was not requested, so
+        ribbons still come in flat rather than not at all.
+        """
+        grid = self.site.get("terrain")
+        if grid is None:
+            return 0.0
+        return grid.sample(point[0], point[1]) - self.site.get("datum_m", 0.0)
+
     # -- orchestration -------------------------------------------------------
 
     def build_into(self, doc, progress=None):
         """Populate an open, empty document with the site."""
         refresh_tolerance(doc)
+        # "centrelines" | "ribbons" | "both". Ribbons look right; centrelines
+        # stay useful for tracing over, so both is a legitimate answer.
+        road_style = self.options.get("road_style") or self.site.get(
+            "request", {}).get("road_style") or "ribbons"
+
+        def build_ways(key):
+            if road_style in ("centrelines", "both"):
+                self.build_lines(doc, key)
+            if road_style in ("ribbons", "both"):
+                self.build_ribbons(doc, key)
+
         steps = [
             ("terrain", lambda: self.build_terrain(doc)),
             ("buildings", lambda: self.build_buildings(doc)),
-            ("roads", lambda: self.build_lines(doc, "roads")),
-            ("rail", lambda: self.build_lines(doc, "rail")),
+            ("roads", lambda: build_ways("roads")),
+            ("rail", lambda: build_ways("rail")),
             ("water", lambda: self.build_flat_areas(doc, "water")),
             ("green", lambda: self.build_flat_areas(doc, "green")),
         ]
