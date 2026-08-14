@@ -222,6 +222,44 @@ def _direct_shape(doc, category_id, geometry, name, comment=None):
         return None
 
 
+def ribbon_quads(points, half_width, sample_z, place, lift_m=0.0):
+    """Quads for one road ribbon. -> list of 4 (x, y, z) tuples, in METRES.
+
+    Deliberately pure: no Revit types, so the ordering that actually matters
+    here can be tested headless. That ordering is:
+
+      1. offset and sample in UNROTATED local metres, because the terrain
+         grid lives in that space;
+      2. only then apply `place` to rotate points into the host's frame.
+
+    Sampling after rotating reads the terrain at the wrong spot, and skipping
+    `place` entirely leaves the roads unrotated while every other layer is
+    rotated - which is exactly the bug this function exists to prevent.
+    """
+    if len(points) < 2 or half_width <= 0:
+        return []
+
+    from . import geom as _geom
+    left, right = _geom.offset_polyline(points, half_width)
+
+    # Heights sampled in unrotated space, before `place` moves anything.
+    lz = [sample_z(p) + lift_m for p in left]
+    rz = [sample_z(p) + lift_m for p in right]
+
+    placed_left = [place(x, y) for x, y in left]
+    placed_right = [place(x, y) for x, y in right]
+
+    quads = []
+    for i in range(len(points) - 1):
+        quads.append([
+            (placed_left[i][0], placed_left[i][1], lz[i]),
+            (placed_left[i + 1][0], placed_left[i + 1][1], lz[i + 1]),
+            (placed_right[i + 1][0], placed_right[i + 1][1], rz[i + 1]),
+            (placed_right[i][0], placed_right[i][1], rz[i]),
+        ])
+    return quads
+
+
 def _tessellated_face(corners, material_id=None):
     """One quad for a TessellatedShapeBuilder. -> TessellatedFace, or None.
 
@@ -459,7 +497,6 @@ class SiteBuilder(object):
             return
 
         material = _get_material(doc, key, self._materials)
-        lift = _ft(ROAD_LIFT_M)
         quads_built = 0
 
         for feature in features:
@@ -469,21 +506,15 @@ class SiteBuilder(object):
                 continue
 
             half = max(0.5, float(feature.get("width") or 4.0)) / 2.0
-            left, right = geom.offset_polyline(points, half)
-
-            # Drape both edges on the terrain we actually built.
-            lz = [self._drape(p) + lift for p in left]
-            rz = [self._drape(p) + lift for p in right]
+            # ROAD_LIFT_M is metres because _xyz takes metres. Converting it
+            # to feet here would triple the lift.
+            quads = ribbon_quads(points, half, self._drape, self._place,
+                                 ROAD_LIFT_M)
 
             faces = []
-            for i in range(len(points) - 1):
-                corners = [
-                    _xyz(left[i][0], left[i][1], lz[i]),
-                    _xyz(left[i + 1][0], left[i + 1][1], lz[i + 1]),
-                    _xyz(right[i + 1][0], right[i + 1][1], rz[i + 1]),
-                    _xyz(right[i][0], right[i][1], rz[i]),
-                ]
-                face = _tessellated_face(corners, material)
+            for quad in quads:
+                face = _tessellated_face([_xyz(x, y, z) for x, y, z in quad],
+                                         material)
                 if face is not None:
                     faces.append(face)
 
@@ -509,10 +540,12 @@ class SiteBuilder(object):
                 % (key.title(), quads_built))
 
     def _drape(self, point):
-        """Terrain height in metres at a local point, datum already applied.
+        """Terrain height in metres at an UNROTATED local point.
 
-        Falls back to the datum plane when terrain was not requested, so
-        ribbons still come in flat rather than not at all.
+        Unrotated because the terrain grid is built in frame coordinates and
+        only rotated on its way into Revit. Datum already applied. Falls back
+        to the datum plane when terrain was not requested, so ribbons still
+        come in flat rather than not at all.
         """
         grid = self.site.get("terrain")
         if grid is None:

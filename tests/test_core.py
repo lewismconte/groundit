@@ -408,6 +408,70 @@ def test_offset_polyline():
           all(v == v and abs(v) < 1e6 for p in left + right for v in p))
 
 
+def test_ribbon_quads():
+    """Ribbon placement.
+
+    Regression: the first ribbon implementation never applied the site
+    rotation, so roads came in unrotated while terrain and buildings were
+    rotated to project north - the roads sat at an angle to everything else.
+    It also added a lift converted to feet onto a value in metres.
+    """
+    print("Ribbon placement")
+    from groundit import build, geodesy
+
+    line = [(0.0, 0.0), (10.0, 0.0), (20.0, 0.0)]
+    flat = lambda p: 0.0                                    # noqa: E731
+    identity = lambda x, y: (x, y)                          # noqa: E731
+
+    quads = build.ribbon_quads(line, 3.0, flat, identity)
+    check("one quad per segment", len(quads) == 2, len(quads))
+    check("each quad has four corners", all(len(q) == 4 for q in quads))
+
+    # Rotation must reach the output. Compare against rotating by hand.
+    angle = math.radians(37.0)
+    rotate = lambda x, y: geodesy.rotate(x, y, angle)        # noqa: E731
+    turned = build.ribbon_quads(line, 3.0, flat, rotate)
+
+    good = True
+    for plain_quad, turned_quad in zip(quads, turned):
+        for (px, py, _pz), (tx, ty, _tz) in zip(plain_quad, turned_quad):
+            ex, ey = geodesy.rotate(px, py, angle)
+            if abs(ex - tx) > 1e-9 or abs(ey - ty) > 1e-9:
+                good = False
+    check("rotation is applied to ribbon points", good)
+    check("rotation actually moved them",
+          abs(turned[0][0][0] - quads[0][0][0]) > 1e-6)
+
+    # Sampling must happen BEFORE placement: a sampler keyed to unrotated
+    # coordinates must see unrotated coordinates.
+    seen = []
+
+    def spy(p):
+        seen.append(p)
+        return 0.0
+
+    build.ribbon_quads(line, 3.0, spy, rotate)
+    check("terrain is sampled in unrotated space",
+          all(abs(p[1]) <= 3.0 + 1e-9 for p in seen), seen[:3])
+
+    # Lift is metres, matching _xyz. A feet conversion would treble it.
+    lifted = build.ribbon_quads(line, 3.0, flat, identity, 0.12)
+    check("lift is applied in metres",
+          all(abs(c[2] - 0.12) < 1e-9 for q in lifted for c in q),
+          lifted[0][0])
+
+    # Height comes from the sampler, per corner, not one value per road.
+    slope = lambda p: p[0] * 0.1                             # noqa: E731
+    sloped = build.ribbon_quads(line, 3.0, slope, identity)
+    check("each corner carries its own sampled height",
+          abs(sloped[0][0][2] - 0.0) < 1e-9
+          and abs(sloped[0][1][2] - 1.0) < 1e-9, sloped[0])
+
+    check("degenerate input yields nothing",
+          build.ribbon_quads([(0.0, 0.0)], 3.0, flat, identity) == []
+          and build.ribbon_quads(line, 0.0, flat, identity) == [])
+
+
 def test_sidecar():
     """The record that makes an update possible.
 
@@ -676,6 +740,7 @@ def main():
     test_overpass_parse()
     test_grid_and_spec()
     test_offset_polyline()
+    test_ribbon_quads()
     test_sidecar()
     test_transport()
     test_picker_pump()
