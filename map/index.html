@@ -1,0 +1,663 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Groundit - pick your site</title>
+<style>
+  /* No frameworks and no CDN on purpose: this page has to work on a locked
+     down office network where unpkg is blocked but map tiles are not. */
+  :root {
+    --bg: #1e1e1e; --panel: #252526; --panel-2: #2d2d30; --line: #3f3f46;
+    --text: #e8e8e8; --dim: #9a9a9a; --accent: #4ea1ff; --accent-2: #2b6fb8;
+    --good: #6bbf59; --warn: #e0a33e; --bad: #d95c5c;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f3f3f3; --panel: #ffffff; --panel-2: #f0f0f0; --line: #d0d0d0;
+      --text: #1a1a1a; --dim: #666; --accent: #0b6ec4; --accent-2: #0a5a9e;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    display: flex; background: var(--bg); color: var(--text);
+    font: 13px/1.45 "Segoe UI", system-ui, sans-serif; overflow: hidden;
+  }
+
+  /* ---------------------------------------------------------- sidebar */
+  #side {
+    width: 320px; flex: 0 0 320px; height: 100%; overflow-y: auto;
+    background: var(--panel); border-right: 1px solid var(--line);
+    display: flex; flex-direction: column;
+  }
+  #brand { padding: 16px 18px 12px; border-bottom: 1px solid var(--line); }
+  #brand h1 { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: .2px; }
+  #brand p { margin: 3px 0 0; font-size: 11.5px; color: var(--dim); }
+
+  .group { padding: 14px 18px; border-bottom: 1px solid var(--line); }
+  .group > h2 {
+    margin: 0 0 9px; font-size: 10.5px; font-weight: 600; color: var(--dim);
+    text-transform: uppercase; letter-spacing: .9px;
+  }
+
+  label.row {
+    display: flex; align-items: center; gap: 9px; padding: 4px 0; cursor: pointer;
+    user-select: none;
+  }
+  label.row input { accent-color: var(--accent); width: 15px; height: 15px; margin: 0; }
+  label.row .sub { color: var(--dim); font-size: 11px; margin-left: auto; }
+
+  .field { margin: 9px 0 0; }
+  .field > span { display: block; font-size: 11.5px; color: var(--dim); margin-bottom: 4px; }
+  select, input[type=text] {
+    width: 100%; background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--line); border-radius: 4px; padding: 6px 8px;
+    font: inherit; font-size: 12.5px;
+  }
+  input[type=range] { width: 100%; accent-color: var(--accent); margin: 2px 0 0; }
+  .rangelab { display: flex; justify-content: space-between; font-size: 11.5px; color: var(--dim); }
+  .rangelab b { color: var(--text); font-weight: 600; }
+
+  button {
+    font: inherit; border-radius: 4px; border: 1px solid var(--line);
+    background: var(--panel-2); color: var(--text); padding: 7px 10px; cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button.primary {
+    background: var(--accent); border-color: var(--accent); color: #fff;
+    font-weight: 600; width: 100%; padding: 11px; font-size: 14px;
+  }
+  button.primary:hover { background: var(--accent-2); }
+  button.primary:disabled {
+    background: var(--panel-2); border-color: var(--line); color: var(--dim);
+    cursor: not-allowed; font-weight: 400;
+  }
+  button.ghost { width: 100%; }
+
+  #foot { margin-top: auto; padding: 14px 18px 18px; }
+  #readout {
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 5px;
+    padding: 10px 11px; font-size: 12px; margin-bottom: 10px;
+  }
+  #readout .line { display: flex; justify-content: space-between; padding: 2px 0; }
+  #readout .line span:first-child { color: var(--dim); }
+  #readout .line b { font-weight: 600; font-variant-numeric: tabular-nums; }
+  #warn { margin-top: 7px; font-size: 11.5px; color: var(--warn); display: none; }
+
+  /* -------------------------------------------------------------- map */
+  #wrap { flex: 1; position: relative; overflow: hidden; }
+  #map { position: absolute; inset: 0; cursor: grab; background: #0d0d0d; }
+  #map.drawing { cursor: crosshair; }
+  #map.panning { cursor: grabbing; }
+  #map img { position: absolute; width: 256px; height: 256px; user-select: none;
+             -webkit-user-drag: none; }
+  #sel {
+    position: absolute; border: 2px solid var(--accent);
+    background: rgba(78,161,255,.14); display: none; cursor: move;
+  }
+  #sel .h {
+    position: absolute; width: 12px; height: 12px; background: #fff;
+    border: 2px solid var(--accent); border-radius: 2px;
+  }
+  #sel .nw { left: -7px; top: -7px; cursor: nwse-resize; }
+  #sel .ne { right: -7px; top: -7px; cursor: nesw-resize; }
+  #sel .sw { left: -7px; bottom: -7px; cursor: nesw-resize; }
+  #sel .se { right: -7px; bottom: -7px; cursor: nwse-resize; }
+  #sel .dim {
+    position: absolute; left: 50%; top: -26px; transform: translateX(-50%);
+    background: var(--accent); color: #fff; font-size: 11px; font-weight: 600;
+    padding: 2px 7px; border-radius: 3px; white-space: nowrap;
+  }
+
+  #tools {
+    position: absolute; top: 12px; left: 12px; display: flex; gap: 6px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 5px;
+    padding: 5px;
+  }
+  #tools button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  #zoomer {
+    position: absolute; top: 12px; right: 12px; display: flex; flex-direction: column;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 5px;
+    overflow: hidden;
+  }
+  #zoomer button { border: 0; border-radius: 0; width: 32px; height: 30px; font-size: 16px; }
+  #zoomer button + button { border-top: 1px solid var(--line); }
+
+  #searchbar {
+    position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+    width: min(420px, 46vw);
+  }
+  #searchbar input {
+    box-shadow: 0 2px 10px rgba(0,0,0,.3);
+  }
+  #results {
+    margin-top: 4px; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 5px; overflow: hidden; display: none;
+    box-shadow: 0 4px 14px rgba(0,0,0,.35);
+  }
+  #results div { padding: 7px 10px; cursor: pointer; font-size: 12.5px; }
+  #results div:hover { background: var(--panel-2); }
+  #results div + div { border-top: 1px solid var(--line); }
+
+  #attrib {
+    position: absolute; bottom: 0; right: 0; font-size: 10.5px; color: var(--dim);
+    background: rgba(0,0,0,.45); padding: 2px 7px; border-top-left-radius: 4px;
+  }
+  #attrib a { color: var(--dim); }
+  #hint {
+    position: absolute; bottom: 10px; left: 12px; font-size: 11.5px;
+    color: var(--text); background: var(--panel); border: 1px solid var(--line);
+    padding: 5px 9px; border-radius: 4px; opacity: .92;
+  }
+  #done {
+    position: absolute; inset: 0; display: none; place-items: center;
+    background: rgba(0,0,0,.72); backdrop-filter: blur(3px);
+  }
+  #done div { text-align: center; }
+  #done h2 { font-size: 20px; margin: 0 0 6px; }
+  #done p { color: var(--dim); margin: 0; }
+</style>
+</head>
+<body>
+
+<div id="side">
+  <div id="brand">
+    <h1>Groundit</h1>
+    <p>Draw a box around your site, pick what you want, and import.</p>
+  </div>
+
+  <div class="group">
+    <h2>Layers</h2>
+    <label class="row"><input type="checkbox" id="l_terrain" checked> Terrain
+      <span class="sub">elevation</span></label>
+    <label class="row"><input type="checkbox" id="l_buildings" checked> Buildings
+      <span class="sub">massing</span></label>
+    <label class="row"><input type="checkbox" id="l_roads" checked> Roads
+      <span class="sub">centrelines</span></label>
+    <label class="row"><input type="checkbox" id="l_water"> Water</label>
+    <label class="row"><input type="checkbox" id="l_green"> Parks and trees</label>
+    <label class="row"><input type="checkbox" id="l_rail"> Railways</label>
+
+    <div class="field" id="roadfield">
+      <span>Road detail</span>
+      <select id="road_group">
+        <option value="major">Major roads only</option>
+        <option value="streets" selected>Streets and above</option>
+        <option value="all">Everything, including paths</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="group">
+    <h2>Terrain detail</h2>
+    <div class="field">
+      <div class="rangelab"><span>Ground resolution</span><b id="res_lab">15 m</b></div>
+      <input type="range" id="res" min="5" max="60" step="1" value="15">
+    </div>
+    <div class="field">
+      <div class="rangelab"><span>Point budget</span><b id="pts_lab">10,000</b></div>
+      <input type="range" id="pts" min="1000" max="40000" step="1000" value="10000">
+    </div>
+  </div>
+
+  <div class="group">
+    <h2>Placement</h2>
+    <div class="field">
+      <span>Height datum</span>
+      <select id="datum">
+        <option value="centre" selected>Site centre sits at project zero</option>
+        <option value="min">Lowest point sits at project zero</option>
+        <option value="sealevel">Keep true height above sea level</option>
+      </select>
+    </div>
+    <label class="row" style="margin-top:9px">
+      <input type="checkbox" id="truenorth" checked> Rotate to project True North</label>
+    <label class="row">
+      <input type="checkbox" id="writeloc"> Write this location to the project</label>
+  </div>
+
+  <div id="foot">
+    <div id="readout">
+      <div class="line"><span>Site size</span><b id="r_size">-</b></div>
+      <div class="line"><span>Terrain grid</span><b id="r_grid">-</b></div>
+      <div class="line"><span>Tiles to fetch</span><b id="r_tiles">-</b></div>
+      <div class="line"><span>Ground sample</span><b id="r_mpp">-</b></div>
+      <div id="warn"></div>
+    </div>
+    <button class="primary" id="go" disabled>Draw an area first</button>
+    <button class="ghost" id="cancel" style="margin-top:8px">Cancel</button>
+  </div>
+</div>
+
+<div id="wrap">
+  <div id="map"></div>
+
+  <div id="sel">
+    <div class="dim" id="seldim"></div>
+    <div class="h nw" data-c="nw"></div><div class="h ne" data-c="ne"></div>
+    <div class="h sw" data-c="sw"></div><div class="h se" data-c="se"></div>
+  </div>
+
+  <div id="tools">
+    <button id="t_pan" class="on" title="Pan the map">Pan</button>
+    <button id="t_draw" title="Drag to draw the site boundary">Draw area</button>
+    <button id="t_base" title="Switch basemap">Satellite</button>
+    <button id="t_clear" title="Clear the selection">Clear</button>
+  </div>
+
+  <div id="zoomer">
+    <button id="z_in">+</button><button id="z_out">&minus;</button>
+  </div>
+
+  <div id="searchbar">
+    <input type="text" id="search" placeholder="Search for an address or place, then press Enter"
+           autocomplete="off" spellcheck="false">
+    <div id="results"></div>
+  </div>
+
+  <div id="hint">Hold <b>Shift</b> and drag to draw a site boundary</div>
+  <div id="attrib"></div>
+
+  <div id="done"><div>
+    <h2>Off to Revit</h2>
+    <p>You can close this tab.</p>
+  </div></div>
+</div>
+
+<script>
+"use strict";
+
+/* ------------------------------------------------------------------ maths
+   These mirror lib/groundit/geodesy.py exactly. If you change one, change
+   the other, or the estimate shown here will not match what gets built. */
+var EARTH_R = 6378137, EQ_MPP = 2 * Math.PI * EARTH_R / 256;
+var TILE = 256, MIN_Z = 8, MAX_Z = 15, MAX_TILES = 24;
+
+function worldSize(z) { return TILE * Math.pow(2, z); }
+function lonToWorldX(lon, z) { return (lon + 180) / 360 * worldSize(z); }
+function latToWorldY(lat, z) {
+  var s = Math.sin(lat * Math.PI / 180);
+  s = Math.max(-0.9999, Math.min(0.9999, s));
+  return (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * worldSize(z);
+}
+function worldXToLon(x, z) { return x / worldSize(z) * 360 - 180; }
+function worldYToLat(y, z) {
+  var n = Math.PI * (1 - 2 * y / worldSize(z));
+  return Math.atan(Math.sinh(n)) * 180 / Math.PI;
+}
+function mppAt(lat, z) { return EQ_MPP * Math.cos(lat * Math.PI / 180) / Math.pow(2, z); }
+function zoomForRes(lat, target) {
+  var z = MIN_Z;
+  while (z < MAX_Z && mppAt(lat, z) > target) z++;
+  return z;
+}
+function bboxSizeM(b) {
+  var clat = (b[1] + b[3]) / 2, rad = Math.PI / 180;
+  return [Math.abs((b[2] - b[0]) * rad * EARTH_R * Math.cos(clat * rad)),
+          Math.abs((b[3] - b[1]) * rad * EARTH_R)];
+}
+function tileCount(b, z) {
+  var x0 = Math.floor(lonToWorldX(b[0], z) / TILE), x1 = Math.floor(lonToWorldX(b[2], z) / TILE);
+  var y0 = Math.floor(latToWorldY(b[3], z) / TILE), y1 = Math.floor(latToWorldY(b[1], z) / TILE);
+  return (x1 - x0 + 1) * (y1 - y0 + 1);
+}
+function gridDims(b, budget) {
+  var s = bboxSizeM(b);
+  if (s[0] <= 0 || s[1] <= 0) return [2, 2];
+  var aspect = s[0] / s[1];
+  var rows = Math.floor(Math.sqrt(Math.max(1, budget) / aspect));
+  return [Math.max(2, Math.floor(rows * aspect)), Math.max(2, rows)];
+}
+function commas(n) { return String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ","); }
+
+/* ------------------------------------------------------------------ state */
+var view = { lon: -0.1276, lat: 51.5072, z: 15 };
+var bbox = null;                      // [w, s, e, n]
+var mode = "pan";
+var basemap = "street";
+var token = (location.search.match(/[?&]t=([^&]+)/) || [])[1] || "";
+
+var mapEl = document.getElementById("map"), wrapEl = document.getElementById("wrap");
+var selEl = document.getElementById("sel"), selDim = document.getElementById("seldim");
+var tiles = {};
+
+var BASEMAPS = {
+  street: {
+    url: function (z, x, y) { return "https://tile.openstreetmap.org/" + z + "/" + x + "/" + y + ".png"; },
+    max: 19,
+    attrib: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a> contributors'
+  },
+  satellite: {
+    url: function (z, x, y) {
+      return "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/"
+        + z + "/" + y + "/" + x;      /* note: this service is z/y/x, not z/x/y */
+    },
+    max: 19,
+    attrib: 'Imagery &copy; Esri, Maxar, Earthstar Geographics'
+  }
+};
+
+/* ------------------------------------------------------------------ render */
+function viewport() { return { w: wrapEl.clientWidth, h: wrapEl.clientHeight }; }
+function topLeft() {
+  var v = viewport();
+  return { x: lonToWorldX(view.lon, view.z) - v.w / 2, y: latToWorldY(view.lat, view.z) - v.h / 2 };
+}
+function screenOf(lon, lat) {
+  var tl = topLeft();
+  return { x: lonToWorldX(lon, view.z) - tl.x, y: latToWorldY(lat, view.z) - tl.y };
+}
+function lonLatOf(sx, sy) {
+  var tl = topLeft();
+  return [worldXToLon(tl.x + sx, view.z), worldYToLat(tl.y + sy, view.z)];
+}
+
+function draw() {
+  var v = viewport(), tl = topLeft(), src = BASEMAPS[basemap];
+  var z = Math.min(view.z, src.max), n = Math.pow(2, z), seen = {};
+  var scale = Math.pow(2, view.z - z), size = TILE * scale;
+
+  var x0 = Math.floor(tl.x / size), x1 = Math.floor((tl.x + v.w) / size);
+  var y0 = Math.floor(tl.y / size), y1 = Math.floor((tl.y + v.h) / size);
+
+  for (var x = x0; x <= x1; x++) {
+    for (var y = y0; y <= y1; y++) {
+      if (y < 0 || y >= n) continue;
+      var wx = ((x % n) + n) % n;                    /* wrap the date line */
+      var key = basemap + "/" + z + "/" + wx + "/" + y;
+      seen[key] = true;
+      var img = tiles[key];
+      if (!img) {
+        img = document.createElement("img");
+        img.src = src.url(z, wx, y);
+        img.loading = "eager";
+        img.onerror = function () { this.style.visibility = "hidden"; };
+        mapEl.appendChild(img);
+        tiles[key] = img;
+      }
+      img.style.width = img.style.height = size + "px";
+      img.style.left = (x * size - tl.x) + "px";
+      img.style.top = (y * size - tl.y) + "px";
+    }
+  }
+  for (var k in tiles) {
+    if (!seen[k]) { mapEl.removeChild(tiles[k]); delete tiles[k]; }
+  }
+  document.getElementById("attrib").innerHTML = src.attrib;
+  drawSelection();
+}
+
+function drawSelection() {
+  if (!bbox) { selEl.style.display = "none"; return; }
+  var a = screenOf(bbox[0], bbox[3]), b = screenOf(bbox[2], bbox[1]);
+  selEl.style.display = "block";
+  selEl.style.left = Math.min(a.x, b.x) + "px";
+  selEl.style.top = Math.min(a.y, b.y) + "px";
+  selEl.style.width = Math.abs(b.x - a.x) + "px";
+  selEl.style.height = Math.abs(b.y - a.y) + "px";
+  var s = bboxSizeM(bbox);
+  selDim.textContent = Math.round(s[0]) + " m x " + Math.round(s[1]) + " m";
+}
+
+/* ------------------------------------------------------------- interaction */
+var drag = null;
+
+mapEl.addEventListener("mousedown", function (e) {
+  if (e.button !== 0) return;
+  if (mode === "draw" || e.shiftKey) {
+    var ll = lonLatOf(e.offsetX, e.offsetY);
+    drag = { kind: "draw", ox: e.clientX, oy: e.clientY, anchor: ll };
+    bbox = [ll[0], ll[1], ll[0], ll[1]];
+  } else {
+    drag = { kind: "pan", ox: e.clientX, oy: e.clientY, lon: view.lon, lat: view.lat };
+    mapEl.classList.add("panning");
+  }
+  e.preventDefault();
+});
+
+selEl.addEventListener("mousedown", function (e) {
+  if (e.button !== 0) return;
+  var corner = e.target.getAttribute("data-c");
+  if (corner) {
+    /* Anchor on the opposite corner and resize from there. */
+    var anchor = [corner.indexOf("w") >= 0 ? bbox[2] : bbox[0],
+                  corner.indexOf("n") >= 0 ? bbox[1] : bbox[3]];
+    drag = { kind: "draw", anchor: anchor };
+  } else {
+    drag = { kind: "move", ox: e.clientX, oy: e.clientY, start: bbox.slice() };
+  }
+  e.preventDefault();
+  e.stopPropagation();
+});
+
+window.addEventListener("mousemove", function (e) {
+  if (!drag) return;
+  var rect = wrapEl.getBoundingClientRect();
+
+  if (drag.kind === "pan") {
+    var tl = topLeft();
+    var nx = tl.x - (e.clientX - drag.ox), ny = tl.y - (e.clientY - drag.oy);
+    var v = viewport();
+    view.lon = worldXToLon(nx + v.w / 2, view.z);
+    view.lat = worldYToLat(Math.max(0, Math.min(worldSize(view.z), ny + v.h / 2)), view.z);
+    drag.ox = e.clientX; drag.oy = e.clientY;
+    draw();
+
+  } else if (drag.kind === "draw") {
+    var ll = lonLatOf(e.clientX - rect.left, e.clientY - rect.top);
+    bbox = [Math.min(drag.anchor[0], ll[0]), Math.min(drag.anchor[1], ll[1]),
+            Math.max(drag.anchor[0], ll[0]), Math.max(drag.anchor[1], ll[1])];
+    drawSelection(); update();
+
+  } else if (drag.kind === "move") {
+    var p0 = lonLatOf(0, 0), p1 = lonLatOf(e.clientX - drag.ox, e.clientY - drag.oy);
+    var dlon = p1[0] - p0[0], dlat = p1[1] - p0[1];
+    bbox = [drag.start[0] + dlon, drag.start[1] + dlat,
+            drag.start[2] + dlon, drag.start[3] + dlat];
+    drawSelection(); update();
+  }
+});
+
+window.addEventListener("mouseup", function () {
+  if (drag && drag.kind === "draw") { setMode("pan"); update(); }
+  drag = null;
+  mapEl.classList.remove("panning");
+});
+
+mapEl.addEventListener("wheel", function (e) {
+  e.preventDefault();
+  var before = lonLatOf(e.offsetX, e.offsetY);
+  var nz = Math.max(2, Math.min(19, view.z + (e.deltaY < 0 ? 1 : -1)));
+  if (nz === view.z) return;
+  view.z = nz;
+  /* Keep the point under the cursor pinned while zooming. */
+  var after = lonLatOf(e.offsetX, e.offsetY);
+  view.lon += before[0] - after[0];
+  view.lat += before[1] - after[1];
+  draw();
+}, { passive: false });
+
+function setMode(m) {
+  mode = m;
+  document.getElementById("t_pan").classList.toggle("on", m === "pan");
+  document.getElementById("t_draw").classList.toggle("on", m === "draw");
+  mapEl.classList.toggle("drawing", m === "draw");
+}
+document.getElementById("t_pan").onclick = function () { setMode("pan"); };
+document.getElementById("t_draw").onclick = function () { setMode("draw"); };
+document.getElementById("t_clear").onclick = function () { bbox = null; drawSelection(); update(); };
+document.getElementById("t_base").onclick = function () {
+  basemap = basemap === "street" ? "satellite" : "street";
+  this.textContent = basemap === "street" ? "Satellite" : "Street";
+  for (var k in tiles) { mapEl.removeChild(tiles[k]); delete tiles[k]; }
+  draw();
+};
+document.getElementById("z_in").onclick = function () { view.z = Math.min(19, view.z + 1); draw(); };
+document.getElementById("z_out").onclick = function () { view.z = Math.max(2, view.z - 1); draw(); };
+window.addEventListener("resize", draw);
+
+/* ------------------------------------------------------------------ search */
+var searchEl = document.getElementById("search"), resultsEl = document.getElementById("results");
+searchEl.addEventListener("keydown", function (e) {
+  if (e.key !== "Enter" || !searchEl.value.trim()) return;
+  fetch("https://nominatim.openstreetmap.org/search?format=json&limit=5&q="
+        + encodeURIComponent(searchEl.value.trim()))
+    .then(function (r) { return r.json(); })
+    .then(function (hits) {
+      resultsEl.innerHTML = "";
+      if (!hits.length) {
+        resultsEl.innerHTML = "<div>Nothing found</div>";
+      } else {
+        hits.forEach(function (h) {
+          var d = document.createElement("div");
+          d.textContent = h.display_name;
+          d.onclick = function () {
+            view.lon = parseFloat(h.lon); view.lat = parseFloat(h.lat); view.z = 16;
+            resultsEl.style.display = "none"; searchEl.value = "";
+            draw();
+          };
+          resultsEl.appendChild(d);
+        });
+      }
+      resultsEl.style.display = "block";
+    })
+    .catch(function () {
+      resultsEl.innerHTML = "<div>Search is unavailable right now</div>";
+      resultsEl.style.display = "block";
+    });
+});
+document.addEventListener("click", function (e) {
+  if (!document.getElementById("searchbar").contains(e.target)) resultsEl.style.display = "none";
+});
+
+/* ------------------------------------------------------------------ readout */
+function layers() {
+  var out = [];
+  ["terrain", "buildings", "roads", "water", "green", "rail"].forEach(function (k) {
+    if (document.getElementById("l_" + k).checked) out.push(k);
+  });
+  return out;
+}
+
+function update() {
+  var res = +document.getElementById("res").value;
+  var budget = +document.getElementById("pts").value;
+  document.getElementById("res_lab").textContent = res + " m";
+  document.getElementById("pts_lab").textContent = commas(budget);
+  document.getElementById("roadfield").style.display =
+    document.getElementById("l_roads").checked ? "" : "none";
+
+  var go = document.getElementById("go"), warn = document.getElementById("warn");
+  var chosen = layers();
+  warn.style.display = "none";
+
+  if (!bbox) {
+    ["r_size", "r_grid", "r_tiles", "r_mpp"].forEach(function (id) {
+      document.getElementById(id).textContent = "-";
+    });
+    go.disabled = true; go.textContent = "Draw an area first";
+    return;
+  }
+
+  var size = bboxSizeM(bbox), clat = (bbox[1] + bbox[3]) / 2;
+  var wantsTerrain = chosen.indexOf("terrain") >= 0;
+  var z = zoomForRes(clat, res);
+  while (z > MIN_Z && tileCount(bbox, z) > MAX_TILES) z--;
+  var dims = gridDims(bbox, budget);
+
+  document.getElementById("r_size").textContent =
+    (size[0] < 2000 ? Math.round(size[0]) + " x " + Math.round(size[1]) + " m"
+                    : (size[0] / 1000).toFixed(2) + " x " + (size[1] / 1000).toFixed(2) + " km");
+  document.getElementById("r_grid").textContent = wantsTerrain
+    ? dims[0] + " x " + dims[1] + "  (" + commas(dims[0] * dims[1]) + " pts)" : "off";
+  document.getElementById("r_tiles").textContent = wantsTerrain ? tileCount(bbox, z) : "0";
+  document.getElementById("r_mpp").textContent = wantsTerrain
+    ? mppAt(clat, z).toFixed(1) + " m" : "-";
+
+  var msgs = [];
+  if (size[0] > 20000 || size[1] > 20000) {
+    msgs.push("That area is too big - keep each side under 20 km.");
+    go.disabled = true; go.textContent = "Area too large";
+  } else if (!chosen.length) {
+    msgs.push("Pick at least one layer.");
+    go.disabled = true; go.textContent = "Pick a layer";
+  } else {
+    go.disabled = false; go.textContent = "Import into Revit";
+    if (size[0] > 4000 || size[1] > 4000) {
+      msgs.push("Large areas can take several minutes and make a heavy model.");
+    }
+    if (wantsTerrain && dims[0] * dims[1] > 25000) {
+      msgs.push("Over 25,000 points will make a slow toposolid.");
+    }
+    if (chosen.indexOf("buildings") >= 0 && size[0] * size[1] > 4e6) {
+      msgs.push("A dense city at this size can be thousands of buildings.");
+    }
+  }
+  warn.innerHTML = msgs.join("<br>");
+  warn.style.display = msgs.length ? "block" : "none";
+}
+
+["res", "pts"].forEach(function (id) {
+  document.getElementById(id).addEventListener("input", update);
+});
+["terrain", "buildings", "roads", "water", "green", "rail"].forEach(function (k) {
+  document.getElementById("l_" + k).addEventListener("change", update);
+});
+
+/* ------------------------------------------------------------------ submit */
+function post(route, payload) {
+  return fetch(route + "?t=" + token, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload || {})
+  });
+}
+
+document.getElementById("go").onclick = function () {
+  var request = {
+    bbox: bbox,
+    layers: layers(),
+    road_group: document.getElementById("road_group").value,
+    terrain: {
+      target_m: +document.getElementById("res").value,
+      max_points: +document.getElementById("pts").value
+    },
+    datum: document.getElementById("datum").value,
+    align_true_north: document.getElementById("truenorth").checked,
+    write_site_location: document.getElementById("writeloc").checked
+  };
+  this.disabled = true;
+  this.textContent = "Sending to Revit...";
+  post("/api/submit", request).then(function () {
+    document.getElementById("done").style.display = "grid";
+  });
+};
+
+document.getElementById("cancel").onclick = function () {
+  post("/api/cancel", {}).then(function () {
+    document.getElementById("done").querySelector("h2").textContent = "Cancelled";
+    document.getElementById("done").querySelector("p").textContent = "You can close this tab.";
+    document.getElementById("done").style.display = "grid";
+  });
+};
+
+/* -------------------------------------------------------------------- boot */
+fetch("/api/config")
+  .then(function (r) { return r.json(); })
+  .then(function (cfg) {
+    if (cfg && typeof cfg.lon === "number" && typeof cfg.lat === "number") {
+      view.lon = cfg.lon; view.lat = cfg.lat;
+      view.z = cfg.zoom || 16;
+      /* The project already knows where it is, so say so. */
+      document.getElementById("hint").innerHTML =
+        "Centred on this project's location &mdash; hold <b>Shift</b> and drag to draw";
+    }
+    if (cfg && cfg.name) document.getElementById("brand").querySelector("p").textContent =
+      "Site context for " + cfg.name;
+  })
+  .catch(function () { })
+  .then(function () { draw(); update(); });
+</script>
+</body>
+</html>

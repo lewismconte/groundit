@@ -1,0 +1,12 @@
+{
+    "default_enabled": "True",
+    "type": "extension",
+    "rocket_mode_compatible": "True",
+    "name": "Groundit",
+    "description": "Import real-world site context into Revit. Pick bounds on a map, choose your layers, and get terrain, buildings and roads back as a linked site model. No API keys, no GIS software.",
+    "author": "lewismconte",
+    "author_profile": "https://github.com/lewismconte",
+    "url": "https://github.com/lewismconte/groundit",
+    "website": "https://github.com/lewismconte/groundit",
+    "dependencies": []
+}

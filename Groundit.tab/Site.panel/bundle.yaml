@@ -1,0 +1,5 @@
+# Ribbon order. pyRevit reads "layout:" from bundle.yaml; the old _layout
+# text file is deprecated and silently ignored, which means alphabetical.
+# Names are the bundle folder names WITHOUT the .pushbutton suffix.
+layout:
+  - Import Site

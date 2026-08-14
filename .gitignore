@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+*.pyo
+
+# Generated site models and the local cache of downloaded tiles/OSM data.
+# Both are reproducible from a site spec, and neither belongs in the repo.
+*.rvt
+*.rvt.bak
+cache/
+
+# Editor and OS noise
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+.DS_Store
