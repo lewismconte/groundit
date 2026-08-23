@@ -34,6 +34,37 @@ a clean drawing set. Files are date-stamped into a `Groundit Sites` folder
 next to the host model, so a second run never overwrites a site you have
 already linked and adjusted.
 
+### Coordinate systems
+
+By default Groundit projects into the **UTM zone covering your site**, chosen
+automatically. That needs no datum transformation, works anywhere in the world,
+and is the right answer when a project has no nominated grid.
+
+You can switch to a specific system - MGA2020 zones 49-56, British National
+Grid, New Zealand Transverse Mercator, Irish Transverse Mercator - or turn
+projection off entirely for a flat local grid.
+
+This matters because three separate things go wrong if you ignore it:
+
+| | What it is | How big |
+|---|---|---|
+| Grid convergence | True north and grid north are different directions | up to ~3 deg at a zone edge |
+| Point scale factor | A TM grid compresses or stretches distance | ~0.4 m per km |
+| Datum | Tiles and OSM are WGS84; a national grid may not be | ~100 m for OSGB36 |
+
+Projecting handles the first two implicitly, because projected coordinates
+already carry them. The picker shows the resolved zone, the grid convergence
+and the point scale factor for the area you have drawn, before you import, and
+warns if you pick a zone your site is not actually in.
+
+**North axis** decides what the site's north means: *grid north* matches a
+surveyor's drawing, *true north* matches a compass. They differ by the grid
+convergence.
+
+The projection is validated against the published worked examples from
+Ordnance Survey and Geoscience Australia, and agrees with both to under a
+millimetre.
+
 ### Keeping a site current
 
 **Update Site** re-downloads a site that is already linked and rebuilds it in
@@ -113,7 +144,7 @@ the entire download and geometry path can be tested outside Revit, against
 real data, in seconds.
 
 ```bash
-python tests/test_core.py            # 74 offline tests
+python tests/test_core.py            # 156 offline tests
 python tests/test_core.py --online   # plus a real end-to-end fetch
 python tools/check.py                # the pyRevit field-guide checks
 ```
@@ -173,7 +204,13 @@ corner rather than hovering at its uphill one.
   cities (San Francisco is about 90% measured) and absent in others.
 - **Keep each side under 20 km**, and expect a dense city centre at a few
   kilometres to be thousands of buildings.
-- **The local projection is a tangent plane**, not UTM. Sub-metre over a few
+- **Datum transformations are approximate where one is needed.** British
+  National Grid uses the Ordnance Survey Helmert fit, good to a few metres;
+  OSTN15 is the exact transformation and needs a 20 MB grid file. UTM, MGA2020,
+  NZTM and Irish TM need no datum step at all, so they carry no such error.
+- **Lambert Conformal Conic is not implemented**, so the LCC half of US State
+  Plane is unavailable rather than silently approximated.
+- **The old tangent-plane projection is a tangent plane**, not UTM. Sub-metre over a few
   kilometres, which is far below the accuracy of the source data, but it is
   not a survey-grade coordinate system and should not be treated as one.
 - **True North rotation is the least-proven part.** Verified working end to end

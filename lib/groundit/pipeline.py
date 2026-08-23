@@ -11,6 +11,8 @@ module owns no UI and the buttons keep control of how they report.
 Revit-side: IronPython 2.7, pure ASCII, Python 2 syntax.
 """
 
+import math
+
 from . import build
 
 
@@ -23,9 +25,7 @@ def build_and_save(host_doc, site, request, path, progress=None):
     app = host_doc.Application
     builder = build.SiteBuilder(site, {"road_style": request.get("road_style")})
 
-    if request.get("align_true_north"):
-        # Site coordinates are true-north-up; the host may not be.
-        builder.set_rotation(-build.project_north_angle(host_doc))
+    builder.set_rotation(site_rotation(host_doc, site, request))
 
     site_doc = build.create_site_document(app, host_doc)
     try:
@@ -48,6 +48,32 @@ def build_and_save(host_doc, site, request, path, progress=None):
     # file that was not actually produced.
     build.write_sidecar(path, request, {"bbox": site.get("bbox")})
     return builder
+
+
+def site_rotation(host_doc, site, request):
+    """Total rotation to apply to the site, in radians.
+
+    Two independent parts:
+
+      align_true_north  The host project may be drawn on project north rather
+                        than north-up, so undo that angle.
+      north_mode        Once projected, site coordinates are GRID-north-up,
+                        because a projection already carries its own
+                        convergence. Only if the user asks for true north does
+                        that convergence need rotating out again.
+
+    With no projection (crs "none") the data is already true-north-up and the
+    convergence term is zero, so this collapses to the old behaviour.
+    """
+    rotation = 0.0
+    if request.get("align_true_north"):
+        rotation -= build.project_north_angle(host_doc)
+    if request.get("north_mode") == "true":
+        convergence = (site.get("crs") or {}).get("convergence_deg", 0.0)
+        # Grid north sits `convergence` east of true north, so true north lies
+        # at -convergence on the grid; rotating by +convergence puts it up.
+        rotation += math.radians(convergence)
+    return rotation
 
 
 def apply_site_location(host_doc, site, request):

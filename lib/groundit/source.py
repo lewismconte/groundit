@@ -8,7 +8,7 @@ Progress is reported through a callback rather than a pyRevit ProgressBar for
 the same reason. Pass progress(fraction, message); it may be None.
 """
 
-from . import geodesy, net, overpass, sitespec, tiles
+from . import crs, geodesy, net, overpass, sitespec, tiles
 
 # Above this many terrain tiles the download stops being "runs for a bit" and
 # starts being a coffee break, so drop a zoom level instead.
@@ -137,7 +137,18 @@ def fetch_site(request, progress=None):
         raise ValueError(message)
 
     bbox = geodesy.normalise_bbox(request["bbox"])
-    frame = geodesy.LocalFrame.for_bbox(bbox)
+
+    # A projected frame and the tangent-plane frame expose the same interface,
+    # so nothing downstream cares which is in use. The difference is that a
+    # projected frame yields GRID metres on a real reference system, already
+    # carrying that system's convergence and scale factor.
+    centre_lon, centre_lat = geodesy.bbox_centre(bbox)
+    system, crs_note = crs.resolve(request.get("crs"), centre_lon, centre_lat)
+    if system is None:
+        frame = geodesy.LocalFrame.for_bbox(bbox)
+    else:
+        frame = crs.ProjectedFrame.for_bbox(system, bbox)
+
     layers = request.get("layers", [])
 
     wants_terrain = "terrain" in layers
@@ -166,6 +177,8 @@ def fetch_site(request, progress=None):
         "features": features,
         "stats": stats,
         "datum_m": datum,
+        "crs": crs.describe(system, centre_lon, centre_lat),
+        "crs_note": crs_note,
     }
 
     if grid is not None and (request.get("features") or {}).get("drape", True):

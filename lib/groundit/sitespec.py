@@ -22,6 +22,9 @@ ALL_LAYERS = ["terrain", "buildings", "roads", "water", "green", "rail"]
 # which stay handy for tracing over and are much lighter in a dense city.
 ROAD_STYLES = ("centrelines", "ribbons", "both")
 
+# What the site's north axis means when a projected CRS is in use.
+NORTH_MODES = ("grid", "true")
+
 # What elevation becomes zero in the Revit model.
 DATUM_MODES = {
     "centre": "Terrain at the centre of the site sits at project zero",
@@ -52,6 +55,14 @@ def default_request():
             "drape": True,                     # sit features on the terrain
         },
         "datum": "centre",
+        # Coordinate reference system. "auto" picks the UTM zone covering the
+        # site, which needs no datum shift and works anywhere. "none" keeps
+        # the old tangent-plane behaviour.
+        "crs": "auto",
+        # What the site's north means once projected. Grid north matches a
+        # surveyor's drawing; true north matches a compass. They differ by the
+        # grid convergence, up to about 3 degrees at a zone edge.
+        "north_mode": "grid",
         "align_true_north": True,
         "write_site_location": False,          # push lat/long back to the host
     }
@@ -99,6 +110,18 @@ def validate_request(req):
 
     if req.get("road_style") not in ROAD_STYLES:
         return False, "Unknown road style %r." % req.get("road_style")
+
+    if req.get("north_mode") not in NORTH_MODES:
+        return False, "Unknown north mode %r." % req.get("north_mode")
+
+    # Resolve the CRS here rather than at build time: an unknown code should
+    # stop the run before anything is downloaded, and the message names what
+    # is supported.
+    from . import crs
+    try:
+        crs.resolve(req.get("crs"), *geodesy.bbox_centre(bbox))
+    except ValueError as exc:
+        return False, str(exc)
 
     return True, ""
 

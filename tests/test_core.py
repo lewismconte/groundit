@@ -544,6 +544,174 @@ def test_sidecar():
         shutil.rmtree(folder, ignore_errors=True)
 
 
+def test_crs():
+    """Projected coordinate systems.
+
+    The headline checks are against OFFICIAL published test coordinates, not
+    against this code's own output. Ordnance Survey and Geoscience Australia
+    both publish worked examples; agreeing with them to sub-millimetre is the
+    only evidence worth having that the projection is right.
+    """
+    print("Coordinate reference systems")
+    from groundit import crs
+
+    # Ordnance Survey, "A guide to coordinate systems in Great Britain",
+    # worked example: Caister Water Tower, OSGB36 lat/lon to BNG.
+    lat = 52 + 39 / 60.0 + 27.2531 / 3600.0
+    lon = 1 + 43 / 60.0 + 4.5177 / 3600.0
+    east, north = crs.REGISTRY["EPSG:27700"].projection.forward(lon, lat)
+    check("OS published test point, easting",
+          abs(east - 651409.903) < 0.001, east)
+    check("OS published test point, northing",
+          abs(north - 313177.270) < 0.001, north)
+
+    # Geoscience Australia, GDA2020 Flinders Peak to MGA2020 zone 55.
+    lat = -(37 + 57 / 60.0 + 3.7203 / 3600.0)
+    lon = 144 + 25 / 60.0 + 29.5244 / 3600.0
+    east, north = crs.mga2020(55).projection.forward(lon, lat)
+    check("GA published test point, easting",
+          abs(east - 273741.297) < 0.001, east)
+    check("GA published test point, northing",
+          abs(north - 5796489.777) < 0.001, north)
+
+    # Forward and inverse must be reversible everywhere it will be used.
+    worst = 0.0
+    for centre_lon, centre_lat in ((147.0, -37.0), (-71.0, 42.0), (0.0, 51.5),
+                                   (174.0, -41.0), (-3.0, 55.0)):
+        system = crs.utm(centre_lon, centre_lat)
+        for d_lon in (-2.5, 0.0, 2.5):
+            for d_lat in (-4.0, 0.0, 4.0):
+                lo, la = centre_lon + d_lon, centre_lat + d_lat
+                back_lon, back_lat = system.inverse(*system.forward(lo, la))
+                worst = max(worst, math.hypot(
+                    (back_lon - lo) * 111320 * math.cos(math.radians(la)),
+                    (back_lat - la) * 110540))
+    check("round-trip is reversible to under a millimetre", worst < 0.001, worst)
+
+    # Scale factor on the central meridian is k0 by definition.
+    system = crs.utm(147.0, -37.0)
+    check("scale factor on the central meridian equals k0",
+          abs(system.scale_factor(147.0, -37.0) - 0.9996) < 1e-8,
+          system.scale_factor(147.0, -37.0))
+
+    # Convergence: sign convention AND magnitude. The sign was wrong once
+    # while every magnitude still matched, so both have to be asserted.
+    mismatched = None
+    for lat in (-50.0, -20.0, 20.0, 50.0, 60.0):
+        system = crs.utm(147.0, lat)
+        for d_lon in (-3.0, -1.5, 1.5, 3.0):
+            got = system.convergence(147.0 + d_lon, lat)
+            approx = math.degrees(math.atan(
+                math.tan(math.radians(d_lon)) * math.sin(math.radians(lat))))
+            if abs(got - approx) > 0.001:
+                mismatched = (lat, d_lon, got, approx)
+    check("convergence matches the analytic approximation everywhere",
+          mismatched is None, mismatched)
+    check("convergence is positive east of the CM in the north",
+          crs.utm(147.0, 50.0).convergence(149.0, 50.0) > 0)
+    check("convergence is negative east of the CM in the south",
+          crs.utm(147.0, -50.0).convergence(149.0, -50.0) < 0)
+
+    # The datum trap: WGS84 fed straight into BNG is about 100 m out.
+    bng = crs.REGISTRY["EPSG:27700"]
+    raw = bng.projection.forward(-1.0, 52.0)
+    shifted = bng.forward(-1.0, 52.0)
+    offset = math.hypot(shifted[0] - raw[0], shifted[1] - raw[1])
+    check("BNG datum shift moves the position about 100 m",
+          80.0 < offset < 150.0, offset)
+    back = bng.inverse(*shifted)
+    check("inverse undoes the datum shift",
+          math.hypot((back[0] + 1.0) * 111320 * math.cos(math.radians(52)),
+                     (back[1] - 52.0) * 110540) < 0.01, back)
+    check("BNG declares its datum approximation", bng.accuracy_m > 0)
+    check("UTM needs no datum approximation", crs.utm(0.0, 0.0).accuracy_m == 0)
+
+    # Zone selection, including the two documented irregularities.
+    check("UTM zone for Melbourne", crs.utm_zone(144.96, -37.81) == 55)
+    check("UTM zone for London", crs.utm_zone(-0.13, 51.5) == 30)
+    check("UTM zone for Boston", crs.utm_zone(-71.06, 42.36) == 19)
+    check("south-west Norway widens zone 32", crs.utm_zone(5.0, 60.0) == 32)
+    check("Svalbard skips zone 34", crs.utm_zone(15.0, 78.0) == 33)
+
+    # resolve(): the beginner-facing entry point.
+    system, note = crs.resolve("auto", 144.96, -37.81)
+    check("auto resolves to the covering UTM zone",
+          system.code == "EPSG:32755", system.code)
+    check("auto explains itself", "UTM" in note, note)
+    check("none means no projection", crs.resolve("none", 0.0, 0.0)[0] is None)
+    check("a bare EPSG number is accepted",
+          crs.resolve("7855", 144.96, -37.81)[0].code == "EPSG:7855")
+    try:
+        crs.resolve("EPSG:9999", 0.0, 0.0)
+        check("an unknown code is rejected", False)
+    except ValueError as exc:
+        check("an unknown code is rejected with a helpful message",
+              "MGA2020" in str(exc), str(exc))
+
+    # ProjectedFrame must be a drop-in for geodesy.LocalFrame.
+    bbox = (144.95, -37.83, 144.98, -37.81)
+    system, _ = crs.resolve("auto", *geodesy.bbox_centre(bbox))
+    frame = crs.ProjectedFrame.for_bbox(system, bbox)
+    local = geodesy.LocalFrame.for_bbox(bbox)
+    for name in ("to_local", "to_lonlat", "to_dict"):
+        check("ProjectedFrame provides %s" % name,
+              callable(getattr(frame, name, None)))
+    check("the site origin maps to zero",
+          all(abs(v) < 1e-6 for v in frame.to_local(*geodesy.bbox_centre(bbox))))
+    # Asserted in metres, not degrees: a degree tolerance is meaningless and
+    # hides how good or bad the result actually is. Subtracting the frame
+    # origin costs a little precision against the raw projection, so this is
+    # sub-millimetre rather than the projection's own micrometres.
+    back = frame.to_lonlat(*frame.to_local(144.98, -37.81))
+    error_m = math.hypot((back[0] - 144.98) * 111320 * math.cos(math.radians(37.81)),
+                         (back[1] + 37.81) * 110540)
+    check("the frame round-trips to under a millimetre", error_m < 0.001, error_m)
+
+    # Over a small site the projected frame should agree with the tangent
+    # plane to within the scale factor. Wild divergence would mean something
+    # is broken rather than merely more accurate.
+    pe, pn = frame.to_local(144.98, -37.81)
+    le, ln = local.to_local(144.98, -37.81)
+    check("projected and tangent-plane frames agree to within 0.1 percent",
+          abs(math.hypot(pe, pn) - math.hypot(le, ln)) < 0.001 * math.hypot(le, ln),
+          (pe, pn, le, ln))
+
+    described = crs.describe(system, *geodesy.bbox_centre(bbox))
+    check("describe reports the facts a user needs",
+          described["code"] == "EPSG:32755" and described["easting"] > 0
+          and abs(described["convergence_deg"]) < 3.0, described)
+
+
+def test_north_mode():
+    """Grid north versus true north, which differ by the grid convergence."""
+    print("North mode")
+    from groundit import pipeline
+
+    class FakeDoc(object):
+        pass
+
+    site = {"crs": {"convergence_deg": 2.0}}
+
+    # project_north_angle returns 0.0 when it cannot read a document, so
+    # these isolate the convergence term.
+    grid = pipeline.site_rotation(FakeDoc(), site,
+                                  {"north_mode": "grid",
+                                   "align_true_north": False})
+    check("grid north applies no convergence", abs(grid) < 1e-12, grid)
+
+    true_north = pipeline.site_rotation(FakeDoc(), site,
+                                        {"north_mode": "true",
+                                         "align_true_north": False})
+    check("true north rotates by the convergence",
+          abs(math.degrees(true_north) - 2.0) < 1e-9, math.degrees(true_north))
+
+    unprojected = pipeline.site_rotation(FakeDoc(), {"crs": {}},
+                                         {"north_mode": "true",
+                                          "align_true_north": False})
+    check("no projection means no convergence term",
+          abs(unprojected) < 1e-12, unprojected)
+
+
 def test_transport():
     """A broken transport must fall through, not end the run.
 
@@ -740,6 +908,8 @@ def main():
     test_overpass_parse()
     test_grid_and_spec()
     test_offset_polyline()
+    test_crs()
+    test_north_mode()
     test_ribbon_quads()
     test_sidecar()
     test_transport()

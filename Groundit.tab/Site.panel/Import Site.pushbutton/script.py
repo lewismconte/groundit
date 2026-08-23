@@ -150,6 +150,24 @@ def report(site, path, builder):
     dropped = stats.get("buildings_dropped")
 
     lines = ["Site linked into the project.", "", summary]
+
+    # Report the coordinate system in the same breath as the geometry. The
+    # numbers that decide whether this site will line up with a surveyor's
+    # drawing should not be something you have to go looking for.
+    crs_info = site.get("crs") or {}
+    if crs_info.get("code") and crs_info["code"] != "none":
+        lines.append("")
+        lines.append("Coordinates  %s" % crs_info.get("name", crs_info["code"]))
+        lines.append("  grid convergence %+.3f deg, scale factor %.7f"
+                     % (crs_info.get("convergence_deg", 0.0),
+                        crs_info.get("scale_factor", 1.0)))
+        lines.append("  site centre  E %.1f  N %.1f"
+                     % (crs_info.get("easting", 0.0),
+                        crs_info.get("northing", 0.0)))
+        if crs_info.get("accuracy_m"):
+            lines.append("  datum transformation is approximate, to about "
+                         "%.0f m" % crs_info["accuracy_m"])
+
     if dropped:
         lines.append("")
         lines.append("%d of the smallest buildings were left out to keep the "

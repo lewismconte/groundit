@@ -213,6 +213,33 @@
   <div class="group">
     <h2>Placement</h2>
     <div class="field">
+      <span>Coordinate system</span>
+      <select id="crs">
+        <option value="auto" selected>Automatic (UTM for this location)</option>
+        <option value="none">None - flat local grid</option>
+        <option value="EPSG:7849">MGA2020 zone 49</option>
+        <option value="EPSG:7850">MGA2020 zone 50</option>
+        <option value="EPSG:7851">MGA2020 zone 51</option>
+        <option value="EPSG:7852">MGA2020 zone 52</option>
+        <option value="EPSG:7853">MGA2020 zone 53</option>
+        <option value="EPSG:7854">MGA2020 zone 54</option>
+        <option value="EPSG:7855">MGA2020 zone 55</option>
+        <option value="EPSG:7856">MGA2020 zone 56</option>
+        <option value="EPSG:27700">British National Grid</option>
+        <option value="EPSG:2193">NZ Transverse Mercator</option>
+        <option value="EPSG:2157">Irish Transverse Mercator</option>
+      </select>
+    </div>
+
+    <div class="field" id="northfield">
+      <span>North axis</span>
+      <select id="north_mode">
+        <option value="grid" selected>Grid north (matches survey drawings)</option>
+        <option value="true">True north (matches a compass)</option>
+      </select>
+    </div>
+
+    <div class="field">
       <span>Height datum</span>
       <select id="datum">
         <option value="centre" selected>Site centre sits at project zero</option>
@@ -232,6 +259,9 @@
       <div class="line"><span>Terrain grid</span><b id="r_grid">-</b></div>
       <div class="line"><span>Tiles to fetch</span><b id="r_tiles">-</b></div>
       <div class="line"><span>Ground sample</span><b id="r_mpp">-</b></div>
+      <div class="line"><span>Coordinate system</span><b id="r_crs">-</b></div>
+      <div class="line"><span>Grid convergence</span><b id="r_conv">-</b></div>
+      <div class="line"><span>Scale factor</span><b id="r_scale">-</b></div>
       <div id="warn"></div>
     </div>
     <button class="primary" id="go" disabled>Draw an area first</button>
@@ -549,6 +579,57 @@ function layers() {
   return out;
 }
 
+/* Coordinate systems, for the readout only. The authoritative projection is
+   the Kruger series in crs.py; these are the standard closed-form
+   approximations, good to well under 0.001 deg and 1e-7 in scale, which is
+   far finer than anything worth showing a user. */
+var CRS_TABLE = {
+  "EPSG:27700": { lon0: -2,  k0: 0.9996012717, name: "British National Grid" },
+  "EPSG:2193":  { lon0: 173, k0: 0.9996,       name: "NZ Transverse Mercator" },
+  "EPSG:2157":  { lon0: -8,  k0: 0.99982,      name: "Irish Transverse Mercator" }
+};
+for (var mz = 49; mz <= 56; mz++) {
+  CRS_TABLE["EPSG:" + (7800 + mz)] = { lon0: mz * 6 - 183, k0: 0.9996,
+                                       name: "MGA2020 zone " + mz };
+}
+
+function utmZoneOf(lon, lat) {
+  var z = Math.floor(((lon + 180) % 360) / 6) + 1;
+  if (lat >= 56 && lat < 64 && lon >= 3 && lon < 12) z = 32;
+  return z;
+}
+
+function crsInfo(b) {
+  var lon = (b[0] + b[2]) / 2, lat = (b[1] + b[3]) / 2;
+  var sel = document.getElementById("crs").value;
+  if (sel === "none") return { name: "None - flat local grid", local: true };
+
+  var lon0, k0, name;
+  if (sel === "auto") {
+    var z = utmZoneOf(lon, lat);
+    lon0 = z * 6 - 183; k0 = 0.9996;
+    name = "UTM zone " + z + (lat < 0 ? "S" : "N");
+  } else {
+    var e = CRS_TABLE[sel];
+    if (!e) return { name: sel, local: true };
+    lon0 = e.lon0; k0 = e.k0; name = e.name;
+  }
+
+  var dl = (lon - lon0) * Math.PI / 180, ph = lat * Math.PI / 180;
+  /* The (1 + eta^2) term is not optional: dropping it puts the scale factor
+     out by about 1.7e-6, which is enough for this readout to disagree with
+     the value the build actually uses. eta^2 = e'^2 cos^2(lat). */
+  var E2 = 0.00669437999014, EP2 = E2 / (1 - E2);
+  var A = dl * Math.cos(ph), eta2 = EP2 * Math.cos(ph) * Math.cos(ph);
+  return {
+    name: name,
+    local: false,
+    offCentre: Math.abs(lon - lon0),
+    conv: Math.atan(Math.tan(dl) * Math.sin(ph)) * 180 / Math.PI,
+    scale: k0 * (1 + (1 + eta2) * A * A / 2)
+  };
+}
+
 function update() {
   var res = +document.getElementById("res").value;
   var budget = +document.getElementById("pts").value;
@@ -567,7 +648,7 @@ function update() {
   warn.style.display = "none";
 
   if (!bbox) {
-    ["r_size", "r_grid", "r_tiles", "r_mpp"].forEach(function (id) {
+    ["r_size", "r_grid", "r_tiles", "r_mpp", "r_crs", "r_conv", "r_scale"].forEach(function (id) {
       document.getElementById(id).textContent = "-";
     });
     go.disabled = true; go.textContent = "Draw an area first";
@@ -589,7 +670,22 @@ function update() {
   document.getElementById("r_mpp").textContent = wantsTerrain
     ? mppAt(clat, z).toFixed(1) + " m" : "-";
 
+  var ci = crsInfo(bbox);
+  document.getElementById("r_crs").textContent = ci.name;
+  document.getElementById("r_conv").textContent =
+    ci.local ? "-" : (ci.conv >= 0 ? "+" : "") + ci.conv.toFixed(3) + " deg";
+  document.getElementById("r_scale").textContent =
+    ci.local ? "-" : ci.scale.toFixed(7);
+  document.getElementById("northfield").style.display = ci.local ? "none" : "";
+
   var msgs = [];
+  /* Picking a zone the site is not actually in is the classic beginner
+     error, and it distorts silently rather than failing. */
+  if (!ci.local && ci.offCentre > 4.5) {
+    msgs.push("This site is " + ci.offCentre.toFixed(1) +
+              " deg from that system's central meridian - it is probably the " +
+              "wrong zone. Automatic picks the right one.");
+  }
   if (size[0] > 20000 || size[1] > 20000) {
     msgs.push("That area is too big - keep each side under 20 km.");
     go.disabled = true; go.textContent = "Area too large";
@@ -634,6 +730,8 @@ document.getElementById("go").onclick = function () {
     layers: layers(),
     road_group: document.getElementById("road_group").value,
     road_style: document.getElementById("road_style").value,
+    crs: document.getElementById("crs").value,
+    north_mode: document.getElementById("north_mode").value,
     terrain: {
       target_m: +document.getElementById("res").value,
       max_points: +document.getElementById("pts").value
@@ -690,6 +788,8 @@ function restore(cfg) {
   setValue("road_group", req.road_group);
   setValue("road_style", req.road_style);
   setValue("datum", req.datum);
+  setValue("crs", req.crs);
+  setValue("north_mode", req.north_mode);
   if (req.terrain) {
     setValue("res", req.terrain.target_m);
     setValue("pts", req.terrain.max_points);
