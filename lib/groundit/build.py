@@ -367,6 +367,30 @@ class SiteBuilder(object):
             types = list(DB.FilteredElementCollector(doc).OfClass(toposolid_type_cls))
             if types:
                 try:
+                    toposolid_type = doc.GetElement(types[0].Id)
+                    if toposolid_type is not None:
+                        comp_struct = toposolid_type.GetCompoundStructure()
+                        if comp_struct is not None and comp_struct.LayerCount > 0:
+                            bottom_idx = comp_struct.LayerCount - 1
+                            
+                            z_vals = [p.Z for p in points] if points else [0]
+                            variance = max(z_vals) - min(z_vals)
+                            needed_thickness = variance + 50.0
+
+                            current_width = comp_struct.GetLayerWidth(bottom_idx)
+                            if needed_thickness > current_width:
+                                comp_struct.SetLayerWidth(bottom_idx, needed_thickness)
+
+                            try:
+                                comp_struct.VariableLayerIndex = bottom_idx
+                            except Exception:
+                                pass
+                                
+                            toposolid_type.SetCompoundStructure(comp_struct)
+                except Exception as exc:
+                    self.notes.append("ToposolidType tweak failed: %s" % exc)
+
+                try:
                     solid = toposolid_cls.Create(doc, points, types[0].Id, level.Id)
                     self.counts["terrain"] = grid.point_count()
                     _set_comment(solid, "Groundit terrain, %d points" % grid.point_count())
