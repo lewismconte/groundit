@@ -199,6 +199,14 @@
   </div>
 
   <div class="group">
+    <h2>Map controls</h2>
+    <div class="field">
+      <div class="rangelab"><span>Zoom sensitivity</span><b id="zoom_sens_lab">Normal</b></div>
+      <input type="range" id="zoom_sens" min="1" max="100" step="1" value="20" oninput="document.getElementById('zoom_sens_lab').textContent = this.value < 10 ? 'Very low' : this.value < 20 ? 'Low' : this.value > 80 ? 'Very high' : this.value > 50 ? 'High' : 'Normal';">
+    </div>
+  </div>
+
+  <div class="group">
     <h2>Terrain detail</h2>
     <div class="field">
       <div class="rangelab"><span>Ground resolution</span><b id="res_lab">15 m</b></div>
@@ -504,10 +512,22 @@ window.addEventListener("mouseup", function () {
   mapEl.classList.remove("panning");
 });
 
+var scrollAccumulator = 0;
 mapEl.addEventListener("wheel", function (e) {
   e.preventDefault();
+  
+  var sensEl = document.getElementById("zoom_sens");
+  var sens = sensEl ? parseInt(sensEl.value) : 20;
+  var threshold = 100 * (20 / Math.max(1, sens));
+  
+  scrollAccumulator += e.deltaY;
+  if (Math.abs(scrollAccumulator) < threshold) return;
+  
   var before = lonLatOf(e.offsetX, e.offsetY);
-  var nz = Math.max(2, Math.min(19, view.z + (e.deltaY < 0 ? 1 : -1)));
+  var step = scrollAccumulator < 0 ? 1 : -1;
+  var nz = Math.max(2, Math.min(19, view.z + step));
+  scrollAccumulator = 0;
+  
   if (nz === view.z) return;
   view.z = nz;
   /* Keep the point under the cursor pinned while zooming. */
